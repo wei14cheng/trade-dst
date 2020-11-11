@@ -1,5 +1,3 @@
-from collections import defaultdict
-
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -22,7 +20,6 @@ from utils.masked_cross_entropy import *
 from utils.config import *
 import pprint
 
-
 class TRADE(nn.Module):
     def __init__(self, hidden_size, lang, path, task, lr, dropout, slots, gating_dict, nb_train_vocab=0):
         super(TRADE, self).__init__()
@@ -38,7 +35,7 @@ class TRADE(nn.Module):
         self.gating_dict = gating_dict
         self.nb_gate = len(gating_dict)
         self.cross_entorpy = nn.CrossEntropyLoss()
-        self.nllloss = nn.NLLLoss()
+
         self.encoder = EncoderRNN(self.lang.n_words, hidden_size, self.dropout)
        # self.decoder = Generator(self.lang, self.encoder.embedding, self.lang.n_words, hidden_size, self.dropout, self.slots, self.nb_gate)
         self.decoder = Generator(self.lang, self.lang.n_words, hidden_size, self.dropout, self.slots, self.nb_gate)
@@ -355,23 +352,18 @@ class Generator(nn.Module):
         self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
         self.slots = slots
-        self.domains = set()
+
         self.W_gate = nn.Linear(hidden_size, nb_gate)
+
         # Create independent slot embeddings
         self.slot_w2i = {}
-
-        counter = 0
         for slot in self.slots:
             if slot.split("-")[0] not in self.slot_w2i.keys():
                 self.slot_w2i[slot.split("-")[0]] = len(self.slot_w2i)
             if slot.split("-")[1] not in self.slot_w2i.keys():
                 self.slot_w2i[slot.split("-")[1]] = len(self.slot_w2i)
-            if slot.split("-")[0] != args["main_domain"]:
-                counter += 1
-
         self.Slot_emb = nn.Embedding(len(self.slot_w2i), hidden_size)
         self.Slot_emb.weight.data.normal_(0, 0.1)
-        self.mlp = MLP(hidden_size*counter,hidden_size,hidden_size)
 
     def forward(self, batch_size, encoded_hidden, encoded_outputs, encoded_lens, story, max_res_len, target_batches, use_teacher_forcing, slot_temp):
         all_point_outputs = torch.zeros(len(slot_temp), batch_size, max_res_len, self.vocab_size)
@@ -387,7 +379,6 @@ class Generator(nn.Module):
             if slot.split("-")[0] in self.slot_w2i.keys():
                 domain_w2idx = [self.slot_w2i[slot.split("-")[0]]]
                 domain_w2idx = torch.tensor(domain_w2idx)
-                self.domains.add(slot.split("-")[0])
                 if USE_CUDA: domain_w2idx = domain_w2idx.cuda()
                 domain_emb = self.Slot_emb(domain_w2idx)
             # Slot embbeding
@@ -451,77 +442,51 @@ class Generator(nn.Module):
             # Compute pointer-generator output, decoding each (domain, slot) one-by-one
             words_point_out = []
             counter = 0
-            if args["ltn"]:
-                slot_output = defaultdict(list)
-                for slot in slot_temp:
-                    hidden = encoded_hidden
-                    words = []
-                    slot_emb = slot_emb_dict[slot]
-                    decoder_input = self.dropout_layer(slot_emb).expand(batch_size, self.hidden_size)
-                    for wi in range(max_res_len):
-
-                        if slot.split("-")[0] != args["main_domain"]:
-                            decoder_input, final_p_vocab = self.oi_output(all_gate_outputs, all_point_outputs, counter, decoder_input, encoded_lens,
-                                   encoded_outputs, hidden, story, target_batches, use_teacher_forcing, wi, words)
-                            # print(self.embedding.weight.data.shape)
-                            # print(final_p_vocab.shape)
-                            oi = torch.mm(final_p_vocab, self.embedding.weight.data)
-
-                            slot_output[slot].append(torch.sum(oi))
-                print(slot_output)
-                sum_oi = []
-                for k, v in sorted(slot_output.items()):
-                    print(v)
-                    sum_oi.append(torch.sum(v))
-                concat_oi = torch.cat(sum_oi)
-                hidden = self.mlp(concat_oi)
-
-
-
-            else:
-                hidden = encoded_hidden
-
             for slot in slot_temp:
+                hidden = encoded_hidden
                 words = []
                 slot_emb = slot_emb_dict[slot]
                 decoder_input = self.dropout_layer(slot_emb).expand(batch_size, self.hidden_size)
+
+                # add LTN to the model
                 for wi in range(max_res_len):
 
-                    decoder_input, _ = self.oi_output(all_gate_outputs, all_point_outputs, counter, decoder_input,
-                                                      encoded_lens,
-                                                      encoded_outputs, hidden, story, target_batches,
-                                                      use_teacher_forcing, wi, words)
+                    Oi = defaultdict(list)
+
+                    for domain in dial_dict["domains"]:
+                        if  domain != args["main_domain"]:
+
+                            dec_state, hidden = self.gru(decoder_input.expand_as(hidden), hidden)
+                            context_vec, logits, prob = self.attend(encoded_outputs, hidden.squeeze(0), encoded_lens)
+                            if wi == 0:
+                                all_gate_outputs[counter] = self.W_gate(context_vec)
+                            p_vocab = self.attend_vocab(self.embedding.weight, hidden.squeeze(0))
+                            p_gen_vec = torch.cat([dec_state.squeeze(0), context_vec, decoder_input], -1)
+                            vocab_pointer_switches = self.sigmoid(self.W_ratio(p_gen_vec))
+                            p_context_ptr = torch.zeros(p_vocab.size())
+                            if USE_CUDA: p_context_ptr = p_context_ptr.cuda()
+                            p_context_ptr.scatter_add_(1, story, prob)
+                            final_p_vocab = (1 - vocab_pointer_switches).expand_as(p_context_ptr) * p_context_ptr + \
+                                            vocab_pointer_switches.expand_as(p_context_ptr) * p_vocab
+                            pred_word = torch.argmax(final_p_vocab, dim=1)
+                            words.append([self.lang.index2word[w_idx.item()] for w_idx in pred_word])
+                            all_point_outputs[counter, :, wi, :] = final_p_vocab
+                            if use_teacher_forcing:
+                                decoder_input = self.embedding(target_batches[:, counter, wi]) # Chosen word is next input
+                            else:
+                                decoder_input = self.embedding(pred_word)     ########self.embedding(pred_word).data *torch.argmax(final_p_vocab, dim=1)
+                            if USE_CUDA: decoder_input = decoder_input.cuda()
+
+                            lab_emb = self.embedding(pred_word).weight.data
+
+                            Oi[domain].append(torch.dot(lab_emb, final_p_vocab))
+
+
+
                 counter += 1
                 words_point_out.append(words)
-
-
-
+        
         return all_point_outputs, all_gate_outputs, words_point_out, []
-
-    def oi_output(self, all_gate_outputs, all_point_outputs, counter, decoder_input, encoded_lens, encoded_outputs,
-                  hidden, story, target_batches, use_teacher_forcing, wi, words):
-        dec_state, hidden = self.gru(decoder_input.expand_as(hidden), hidden)
-        context_vec, logits, prob = self.attend(encoded_outputs, hidden.squeeze(0), encoded_lens)
-        if wi == 0:
-            all_gate_outputs[counter] = self.W_gate(context_vec)
-        p_vocab = self.attend_vocab(self.embedding.weight, hidden.squeeze(0))
-        p_gen_vec = torch.cat([dec_state.squeeze(0), context_vec, decoder_input], -1)
-        vocab_pointer_switches = self.sigmoid(self.W_ratio(p_gen_vec))
-        p_context_ptr = torch.zeros(p_vocab.size())
-        if USE_CUDA: p_context_ptr = p_context_ptr.cuda()
-        p_context_ptr.scatter_add_(1, story, prob)
-        final_p_vocab = (1 - vocab_pointer_switches).expand_as(p_context_ptr) * p_context_ptr + \
-                        vocab_pointer_switches.expand_as(p_context_ptr) * p_vocab
-        pred_word = torch.argmax(final_p_vocab, dim=1)
-        words.append([self.lang.index2word[w_idx.item()] for w_idx in pred_word])
-        all_point_outputs[counter, :, wi, :] = final_p_vocab
-        if use_teacher_forcing:
-            decoder_input = self.embedding(target_batches[:, counter, wi])  # Chosen word is next input
-        else:
-            decoder_input = self.embedding(pred_word)  ########self.embedding(pred_word).data *torch.argmax(final_p_vocab, dim=1)
-        if USE_CUDA: decoder_input = decoder_input.cuda()
-
-        return decoder_input, final_p_vocab
 
     def attend(self, seq, cond, lens):
         """
@@ -554,19 +519,3 @@ class AttrProxy(object):
 
     def __getitem__(self, i):
         return getattr(self.module, self.prefix + str(i))
-
-
-class MLP(nn.Module):
-
-    def __init__(self,layerin1, layerin2, output_dim):
-        super(MLP, self).__init__()
-        self.linear1 = nn.Linear(layerin1,layerin2)
-        self.linear2 = nn.Linear(layerin2,output_dim)
-
-    def forward(self,concat_oi):
-        data_in = concat_oi.view(-1, concat_oi.size[0])
-        data_out = F.tanh(self.linear1(data_in))
-        data_out = F.tanh(self.linear2(data_out))
-
-        return data_out
-

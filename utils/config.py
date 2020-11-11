@@ -23,14 +23,14 @@ parser.add_argument('-ds','--dataset', help='dataset', required=False, default="
 parser.add_argument('-t','--task', help='Task Number', required=False, default="dst")
 parser.add_argument('-path','--path', help='path of the file to load', required=False)
 parser.add_argument('-sample','--sample', help='Number of Samples', required=False,default=None)
-parser.add_argument('-patience','--patience', help='', required=False, default=6, type=int)
+parser.add_argument('-patience','--patience', help='', required=False, default=3, type=int)
 parser.add_argument('-es','--earlyStop', help='Early Stop Criteria, BLEU or ENTF1', required=False, default='BLEU')
 parser.add_argument('-all_vocab','--all_vocab', help='', required=False, default=1, type=int)
 parser.add_argument('-imbsamp','--imbalance_sampler', help='', required=False, default=0, type=int)
 parser.add_argument('-data_ratio','--data_ratio', help='', required=False, default=100, type=int)
 parser.add_argument('-um','--unk_mask', help='mask out input token to UNK', type=int, required=False, default=1)
 parser.add_argument('-bsz','--batch', help='Batch_size', required=False, type=int)
-
+parser.add_argument("-ltn", action="store_true")
 # Testing Setting
 parser.add_argument('-rundev','--run_dev_testing', help='', required=False, default=0, type=int)
 parser.add_argument('-viz','--vizualization', help='vizualization', type=int, required=False, default=0)
@@ -64,6 +64,7 @@ parser.add_argument('--run_except_4d', help='', required=False, default=1, type=
 parser.add_argument("--strict_domain", action="store_true")
 parser.add_argument('-exceptd','--except_domain', help='', required=False, default="", type=str)
 parser.add_argument('-onlyd','--only_domain', help='', required=False, default="", type=str)
+parser.add_argument('-main_domain','--main_domain', help='', required=False, default="", type=str)
 
 
 args = vars(parser.parse_args())
