@@ -343,6 +343,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.vocab_size = vocab_size
         self.lang = lang
+
         #self.embedding = shared_emb
         self.embedding = nn.Embedding(vocab_size, hidden_size, padding_idx=PAD_token)
         self.embedding.weight.data.normal_(0, 0.1)
@@ -467,14 +468,15 @@ class Generator(nn.Module):
                             # print(final_p_vocab.shape)
                             oi = torch.mm(final_p_vocab, self.embedding.weight.data)
 
-                            slot_output[slot].append(torch.sum(oi))
-                print(slot_output)
-                sum_oi = []
-                for k, v in sorted(slot_output.items()):
-                    print(v)
-                    sum_oi.append(torch.sum(v))
-                concat_oi = torch.cat(sum_oi)
-                hidden = self.mlp(concat_oi)
+                            slot_output[slot].append(oi)
+
+                    # print(slot_output)
+                    sum_oi = []
+                    for k, v in sorted(slot_output.items()):
+                        # print(v)
+                        sum_oi.append(torch.stack(v,dim=0).sum(dim=0))# mean or sum
+                    concat_oi = torch.cat(sum_oi,dim=1)
+                    hidden = self.mlp(concat_oi).unsqueeze(0)
 
 
 
@@ -564,7 +566,7 @@ class MLP(nn.Module):
         self.linear2 = nn.Linear(layerin2,output_dim)
 
     def forward(self,concat_oi):
-        data_in = concat_oi.view(-1, concat_oi.size[0])
+        data_in = concat_oi
         data_out = F.tanh(self.linear1(data_in))
         data_out = F.tanh(self.linear2(data_out))
 

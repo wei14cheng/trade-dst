@@ -23,7 +23,7 @@ parser.add_argument('-ds','--dataset', help='dataset', required=False, default="
 parser.add_argument('-t','--task', help='Task Number', required=False, default="dst")
 parser.add_argument('-path','--path', help='path of the file to load', required=False)
 parser.add_argument('-sample','--sample', help='Number of Samples', required=False,default=None)
-parser.add_argument('-patience','--patience', help='', required=False, default=3, type=int)
+parser.add_argument('-patience','--patience', help='', required=False, default=5, type=int)
 parser.add_argument('-es','--earlyStop', help='Early Stop Criteria, BLEU or ENTF1', required=False, default='BLEU')
 parser.add_argument('-all_vocab','--all_vocab', help='', required=False, default=1, type=int)
 parser.add_argument('-imbsamp','--imbalance_sampler', help='', required=False, default=0, type=int)
